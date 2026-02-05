@@ -1,0 +1,15 @@
+[connection]
+
+[[usb_device]]
+vid = "303a"
+pid = "1001"
+
+[[usb_device]]
+vid = "1a86"
+pid = "55d3"
+
+[flash]
+
+
+[idf_format_args]
+partition_table = "partitions.csv"

@@ -1,0 +1,17 @@
+[package]
+name = "ov2640"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+keywords = ["no_std", "camera", "ov2640", "embedded-hal"]
+categories = ["no_std", "embedded", "arduino", "drivers"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+defmt = "0.3.10"
+embedded-hal = { workspace = true }
+
+[lib]
+test = false
+bench = false

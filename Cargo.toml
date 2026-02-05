@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["crates/app","crates/ov2640"]
+
+default-members = ["crates/app"]
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
+
+[workspace.dependencies]
+embedded-hal = { version = "1.0.0" }
+ov2640 = { path = "crates/ov2640" }
