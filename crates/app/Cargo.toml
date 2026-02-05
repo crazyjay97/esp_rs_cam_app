@@ -41,5 +41,5 @@ edge-dhcp = "0.7.0"
 edge-nal = "0.6.0"
 edge-nal-embassy = "0.8.1"
 esp-radio = { version = "0.17.0", features = ["defmt", "esp32s3","wifi", "unstable","esp-alloc"] }
-embassy-sync = "0.7.2"
+embassy-sync = { version = "0.7.2", features = ["defmt"] }
 embassy-net = { version = "0.8.0", features = [ "defmt", "tcp", "udp", "dhcpv4", "medium-ethernet"] }

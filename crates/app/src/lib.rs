@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(type_alias_impl_trait)]
+extern crate alloc;
 pub mod cam;
 pub mod errors;
 pub mod wifi;
