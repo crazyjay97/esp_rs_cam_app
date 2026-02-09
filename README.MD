@@ -14,3 +14,9 @@
 * esp_hal (v1.0.0)
 * embassy
 * esp_radio
+
+
+### save image stream to local file
+```
+curl http://IP/stream --output stream.mjpeg --max-time 20
+```

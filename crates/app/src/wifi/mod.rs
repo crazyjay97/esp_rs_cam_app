@@ -1,6 +1,3 @@
-use core::net::{Ipv4Addr, SocketAddrV4};
-
-use defmt::{info, warn};
 use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, IpListenEndpoint, Runner, Stack, StackResources};
 use embassy_time::{Duration, Timer};
@@ -12,11 +9,7 @@ use esp_radio::{
 extern crate alloc;
 use alloc::string::String;
 
-use crate::{
-    cam::{self, stream_camera},
-    errors::RuntimeError,
-    mk_static,
-};
+use crate::{cam::stream_camera, errors::RuntimeError, mk_static};
 
 pub async fn init(
     rng: Rng,
@@ -38,7 +31,8 @@ pub async fn init(
     Ok(stack)
 }
 
-async fn write_all(socket: &mut TcpSocket<'_>, buf: &[u8]) -> Result<(), ()> {
+pub async fn write_all(socket: &mut TcpSocket<'_>, buf: &[u8]) -> Result<(), ()> {
+    // info!("{:02X}", buf);
     let mut offset = 0;
     while offset < buf.len() {
         match socket.write(&buf[offset..]).await {
@@ -142,11 +136,15 @@ pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
 
         let request = unsafe { core::str::from_utf8_unchecked(&buffer[..pos]) };
         defmt::info!("Request: <{}>", request);
-        if request.contains("GET /stream") {
-            let header = "HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=boundarystring\r\nConnection: keep-alive\r\n\r\n";
+        if request.contains("HEAD /stream") || request.contains("OPTIONS /stream") {
+            let header = "\
+HTTP/1.1 200 OK\r\n\
+Access-Control-Allow-Origin: *\r\n\
+        \r\n";
             if socket.write(header.as_bytes()).await.is_err() {
                 continue;
             }
+        } else if request.contains("GET /stream") {
             (camera, dma_buf) = stream_camera(camera, dma_buf, &mut socket).await;
         } else if request.contains("GET /snapshot") {
             _ = socket

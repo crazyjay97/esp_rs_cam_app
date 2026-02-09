@@ -26,6 +26,7 @@ esp-hal = { version="1.0.0", features = [
   "defmt",
   "esp32s3",
   "unstable",
+  "psram",
 ] }
 esp-println = { version = "0.16.1", features = ["defmt-espflash", "esp32s3"] }
 critical-section = "1.2.0"

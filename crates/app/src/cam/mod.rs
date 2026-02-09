@@ -1,13 +1,12 @@
-use alloc::vec::Vec;
-use defmt::info;
-use embassy_executor::Spawner;
-use embassy_net::{dns::Socket, tcp::TcpSocket};
+use alloc::{boxed::Box, vec::Vec};
+use defmt::{error, info, warn};
+use embassy_net::tcp::TcpSocket;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::{Duration, Timer};
+use embassy_time::Timer;
 use esp_hal::{
     delay::Delay,
-    dma_rx_stream_buffer,
+    dma::DmaRxStreamBuf,
     gpio::{Level, Output, OutputConfig},
     i2c,
     lcd_cam::{
@@ -17,6 +16,8 @@ use esp_hal::{
     peripherals::Peripherals,
     time::Rate,
 };
+
+use crate::wifi::write_all;
 
 // Define event types for the camera stream
 pub enum CamEvent {
@@ -97,7 +98,7 @@ pub async fn init_cam(peripherals: Peripherals) -> Result<Camera<'static>, ()> {
         Ok(_) => defmt::info!("ov2640 set_image_format ok"),
         Err(e) => defmt::warn!("ov2640 set_image_format failed {:?}", e),
     }
-    match ov.set_resolution(ov2640::Resolution::R800x600) {
+    match ov.set_resolution(ov2640::Resolution::R320x240) {
         Ok(_) => defmt::info!("ov2640 set_resolution ok"),
         Err(e) => defmt::warn!("ov2640 set_resolution failed {:?}", e),
     }
@@ -117,189 +118,66 @@ pub async fn init_cam(peripherals: Peripherals) -> Result<Camera<'static>, ()> {
         Ok(_) => defmt::info!("ov2640 set_special_effect ok"),
         Err(e) => defmt::warn!("ov2640 set_special_effect failed {:?}", e),
     };
-    //spawner.spawn(cam_task(camera, dma_buf)).ok();
-    //let dma_buf = dma_rx_stream_buffer!(20 * 1024, 1000);
     Ok(camera)
 }
 
-use esp_hal::dma::DmaRxStreamBuf;
-
-#[embassy_executor::task]
-async fn cam_task(mut camera: Camera<'static>, mut dma_buf: DmaRxStreamBuf) {
-    // JPEG 一帧通常 20~60KB，给大一点避免频繁 realloc
-    let mut frame_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
-    let mut found_start = false;
-
-    info!("cam task started >>>>>>>>>>>>>>>>>>");
-
-    loop {
-        let mut transfer = match camera.receive(dma_buf) {
-            Ok(t) => t,
-            Err((e, _cam, _buf)) => {
-                defmt::error!("Camera receive error: {:?}", e);
-                return;
-            }
-        };
-
-        // 跳过前 2 个 dummy transfer
-        for _ in 0..2 {
-            loop {
-                let (data, eof) = transfer.peek_until_eof();
-                let len = data.len();
-                transfer.consume(len);
-                if eof {
-                    break;
-                }
-            }
-        }
-
-        loop {
-            let (data, eof) = transfer.peek_until_eof();
-            let len = data.len();
-
-            if len > 0 {
-                let mut i = 0;
-                while i < len {
-                    if !found_start {
-                        // 找 FF D8
-                        if i + 1 < len && data[i] == 0xFF && data[i + 1] == 0xD8 {
-                            found_start = true;
-                            frame_buffer.clear();
-                            CAM_CHANNEL.send(CamEvent::FrameStart).await;
-
-                            frame_buffer.extend_from_slice(&[0xFF, 0xD8]);
-                            i += 2;
-                        } else {
-                            i += 1;
-                        }
-                    } else {
-                        // 找 FF D9
-                        if i + 1 < len && data[i] == 0xFF && data[i + 1] == 0xD9 {
-                            frame_buffer.push(0xFF);
-                            frame_buffer.push(0xD9);
-                            if !frame_buffer.is_empty() {
-                                let chunk = core::mem::take(&mut frame_buffer);
-                                CAM_CHANNEL.send(CamEvent::Data(chunk)).await;
-                            }
-
-                            CAM_CHANNEL.send(CamEvent::FrameEnd).await;
-
-                            found_start = false;
-                            i += 2;
-                        } else {
-                            frame_buffer.push(data[i]);
-                            i += 1;
-                            // 达到 chunk 大小就发
-                            if frame_buffer.len() >= 2048 {
-                                let chunk = core::mem::take(&mut frame_buffer);
-                                CAM_CHANNEL.send(CamEvent::Data(chunk)).await;
-                            }
-                        }
-                    }
-                }
-            }
-
-            transfer.consume(len);
-            if eof {
-                break;
-            }
-        }
-        // 结束 DMA
-        (camera, dma_buf) = transfer.stop();
-        // 帧间隔
-        Timer::after(Duration::from_millis(1000)).await;
-    }
-}
-
-/// TODO WORK
 pub async fn stream_camera(
     mut camera: Camera<'static>,
     mut dma_buf: DmaRxStreamBuf,
     socket: &mut TcpSocket<'_>,
 ) -> (Camera<'static>, DmaRxStreamBuf) {
-    let mut buf_len = 0;
-    let mut found_start = false;
+    // 发送 HTTP 头
+    if let Err(e) = write_all(
+        socket,
+        b"HTTP/1.1 200 OK\r\n\
+          Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\
+          Cache-Control: no-cache\r\n\
+          Connection: keep-alive\r\n\r\n",
+    )
+    .await
+    {
+        warn!("Failed to send HTTP headers: {}", e);
+        return (camera, dma_buf);
+    }
+
+    let mut jpeg_buffer: Box<[u8; 40960]> = Box::new([0u8; 40960]);
+    let mut jpeg_len = 0;
+    let mut in_frame = false;
+    let mut frame_count = 0;
 
     loop {
+        info!("Starting camera receive, frame: {}", frame_count);
+
         let mut transfer = match camera.receive(dma_buf) {
             Ok(t) => t,
-            Err((e, _cam, _buf)) => {
-                defmt::error!("Camera receive error: {:?}", e);
-                return (_cam, _buf);
+            Err((e, cam, buf)) => {
+                error!("Camera receive error: {:?}", e);
+                return (cam, buf);
             }
         };
-
-        // 跳过前 2 个 dummy transfer
-        for _ in 0..2 {
-            loop {
-                let (data, eof) = transfer.peek_until_eof();
-                let len = data.len();
-                transfer.consume(len);
-                if eof {
-                    break;
-                }
-            }
-        }
 
         loop {
             let (data, eof) = transfer.peek_until_eof();
             let len = data.len();
-
-            if len > 0 {
-                let mut i = 0;
-                while i < len {
-                    if !found_start {
-                        // 找 FF D8
-                        if i + 1 < len && data[i] == 0xFF && data[i + 1] == 0xD8 {
-                            found_start = true;
-                            buf_len = 0;
-                            //let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=boundarystring\r\nConnection: keep-alive\r\n\r\n").await;
-
-                            // 直接把 FF D8 写进 buffer
-                            frame_buffer[buf_len] = 0xFF;
-                            frame_buffer[buf_len + 1] = 0xD8;
-                            buf_len += 2;
-                            i += 2;
-                        } else {
-                            i += 1;
-                        }
-                    } else {
-                        // 找 FF D9
-                        if i + 1 < len && data[i] == 0xFF && data[i + 1] == 0xD9 {
-                            frame_buffer[buf_len] = 0xFF;
-                            frame_buffer[buf_len + 1] = 0xD9;
-                            buf_len += 2;
-
-                            if on_chunk(&frame_buffer[..buf_len]).await.is_err() {
-                                defmt::warn!("Chunk send failed");
-                                return transfer.stop();
-                            }
-
-                            found_start = false;
-                            buf_len = 0;
-                            i += 2;
-                        } else {
-                            // 写入 buffer
-                            if buf_len < frame_buffer.len() {
-                                frame_buffer[buf_len] = data[i];
-                                buf_len += 1;
-                                i += 1;
-                            } else {
-                                defmt::warn!("Frame buffer overflow, dropping data");
-                                i += 1;
-                            }
-
-                            // 达到 2KB chunk，提前发送
-                            if buf_len >= 2048 {
-                                if on_chunk(&frame_buffer[..buf_len]).await.is_err() {
-                                    defmt::warn!("Chunk send failed");
-                                    return transfer.stop();
-                                }
-                                buf_len = 0;
-                            }
-                        }
-                    }
+            if data.is_empty() {
+                transfer.consume(0);
+                if eof {
+                    break;
                 }
+                continue;
+            }
+
+            if let Err(_) = process_jpeg_data(
+                data,
+                &mut *jpeg_buffer, // 解引用 Box
+                &mut jpeg_len,
+                &mut in_frame,
+                &mut frame_count,
+                socket,
+            )
+            .await
+            {
+                return transfer.stop();
             }
 
             transfer.consume(len);
@@ -307,7 +185,123 @@ pub async fn stream_camera(
                 break;
             }
         }
+
         (camera, dma_buf) = transfer.stop();
-        Timer::after(Duration::from_millis(10)).await;
     }
+}
+
+async fn process_jpeg_data(
+    data: &[u8],
+    jpeg_buffer: &mut [u8],
+    jpeg_len: &mut usize,
+    in_frame: &mut bool,
+    frame_count: &mut u32,
+    socket: &mut TcpSocket<'_>,
+) -> Result<(), ()> {
+    let mut i = 0;
+
+    while i < data.len() {
+        // 查找 JPEG 起始标记 (SOI: 0xFF 0xD8)
+        if !*in_frame {
+            if i + 1 < data.len() && data[i] == 0xFF && data[i + 1] == 0xD8 {
+                *in_frame = true;
+                *jpeg_len = 0;
+
+                // 写入 SOI 到缓冲区
+                if *jpeg_len + 2 <= jpeg_buffer.len() {
+                    jpeg_buffer[*jpeg_len..*jpeg_len + 2].copy_from_slice(&[0xFF, 0xD8]);
+                    *jpeg_len += 2;
+                }
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
+        // 在帧内,查找结束标记 (EOI: 0xFF 0xD9)
+        if i + 1 < data.len() && data[i] == 0xFF && data[i + 1] == 0xD9 {
+            // 写入 EOI
+            if *jpeg_len + 2 <= jpeg_buffer.len() {
+                jpeg_buffer[*jpeg_len..*jpeg_len + 2].copy_from_slice(&[0xFF, 0xD9]);
+                *jpeg_len += 2;
+
+                // 发送完整的 multipart 帧
+                if let Err(e) =
+                    send_jpeg_frame(socket, &jpeg_buffer[..*jpeg_len], *frame_count).await
+                {
+                    warn!("Failed to send frame: {}", e);
+                    return Err(());
+                }
+
+                info!("Frame {} sent, size: {} bytes", *frame_count, *jpeg_len);
+                *frame_count += 1;
+                *in_frame = false;
+                *jpeg_len = 0;
+                i += 2;
+                continue;
+            } else {
+                // 缓冲区溢出，丢弃此帧
+                warn!(
+                    "JPEG buffer overflow, dropping frame (size would be: {})",
+                    *jpeg_len + 2
+                );
+                *in_frame = false;
+                *jpeg_len = 0;
+                i += 2;
+                continue;
+            }
+        }
+
+        // 累积帧数据
+        if *jpeg_len < jpeg_buffer.len() {
+            jpeg_buffer[*jpeg_len] = data[i];
+            *jpeg_len += 1;
+        } else {
+            // 缓冲区满，丢弃此帧
+            warn!("JPEG buffer full at {} bytes, dropping frame", *jpeg_len);
+            *in_frame = false;
+            *jpeg_len = 0;
+        }
+        i += 1;
+    }
+
+    Ok(())
+}
+
+async fn send_jpeg_frame(
+    socket: &mut TcpSocket<'_>,
+    jpeg_data: &[u8],
+    _frame_count: u32,
+) -> Result<(), ()> {
+    // 构造 multipart 边界和头部
+    // 使用 heapless::String 避免堆分配
+    let mut header = heapless::String::<256>::new();
+    use core::fmt::Write;
+
+    let _ = write!(
+        &mut header,
+        "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
+        jpeg_data.len()
+    );
+
+    // 发送头部
+    if let Err(e) = write_all(socket, header.as_bytes()).await {
+        warn!("Failed to send frame header: {}", e);
+        return Err(());
+    }
+
+    // 发送 JPEG 数据
+    if let Err(e) = write_all(socket, jpeg_data).await {
+        warn!("Failed to send JPEG data: {}", e);
+        return Err(());
+    }
+
+    // 发送帧结尾
+    if let Err(e) = write_all(socket, b"\r\n").await {
+        warn!("Failed to send frame end: {}", e);
+        return Err(());
+    }
+
+    Ok(())
 }
