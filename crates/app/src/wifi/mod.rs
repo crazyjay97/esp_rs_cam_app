@@ -46,8 +46,8 @@ pub async fn write_all(socket: &mut TcpSocket<'_>, buf: &[u8]) -> Result<(), ()>
 
 #[embassy_executor::task]
 pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
-    let mut rx_buffer = [0; 1536];
-    let mut tx_buffer = [0; 1536];
+    let mut rx_buffer = [0; 4096];
+    let mut tx_buffer = [0; 4096 * 8];
     loop {
         if stack.is_link_up() {
             break;
@@ -57,7 +57,7 @@ pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
     stack
         .config_v4()
         .inspect(|c| defmt::info!("ipv4 config: {}", c));
-    let mut dma_buf = dma_rx_stream_buffer!(20 * 1024, 1000);
+    let mut dma_buf = dma_rx_stream_buffer!(65536);
     loop {
         let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
         socket.set_timeout(Some(Duration::from_secs(10)));
@@ -136,12 +136,20 @@ pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
 
         let request = unsafe { core::str::from_utf8_unchecked(&buffer[..pos]) };
         defmt::info!("Request: <{}>", request);
-        if request.contains("HEAD /stream") || request.contains("OPTIONS /stream") {
-            let header = "\
-HTTP/1.1 200 OK\r\n\
-Access-Control-Allow-Origin: *\r\n\
-        \r\n";
-            if socket.write(header.as_bytes()).await.is_err() {
+        defmt::info!("HEAP: {:?}", esp_alloc::HEAP.stats());
+        if request.contains("GET /index") {
+            let buf = include_bytes!("../../../../stream.html");
+            let mut header = heapless::String::<256>::new();
+            use core::fmt::Write;
+            let _ = write!(
+                &mut header,
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n",
+                buf.len()
+            );
+            if write_all(&mut socket, header.as_bytes()).await.is_err() {
+                continue;
+            }
+            if write_all(&mut socket, buf).await.is_err() {
                 continue;
             }
         } else if request.contains("GET /stream") {

@@ -3,7 +3,7 @@ use defmt::{error, info, warn};
 use embassy_net::tcp::TcpSocket;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::Timer;
+use embassy_time::{Duration, Instant, Timer};
 use esp_hal::{
     delay::Delay,
     dma::DmaRxStreamBuf,
@@ -31,28 +31,28 @@ pub enum CamEvent {
 pub static CAM_CHANNEL: Channel<CriticalSectionRawMutex, CamEvent, 5> = Channel::new();
 
 /// GND
-/// SCL    ->   14
-/// SDA    ->   13
-/// D0     ->   12
-/// D2     ->   11
-/// D4     ->   10
-/// D6     ->   9
+/// SCL    ->   13
+/// SDA    ->   12
+/// D0     ->   11
+/// D2     ->   10
+/// D4     ->   9
+/// D6     ->   46
 /// PCLK   ->   3
 /// PWDN   ->   8
 /// 3.3V
-/// VSYNC   ->  36
-/// HREF   ->   37
-/// RST    ->   38
-/// D1     ->   39
-/// D3     ->   40
-/// D5     ->   41
-/// D7     ->   42
-/// FLASH  ->   2
+/// VSYNC   ->  4
+/// HREF   ->   5
+/// RST    ->   6
+/// D1     ->   7
+/// D3     ->   15
+/// D5     ->   16
+/// D7     ->   17
+/// FLASH  ->   18
 pub async fn init_cam(peripherals: Peripherals) -> Result<Camera<'static>, ()> {
     let mut delay = Delay::new();
 
     let _pwdn = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
-    let mut rst = Output::new(peripherals.GPIO38, Level::Low, OutputConfig::default());
+    let mut rst = Output::new(peripherals.GPIO6, Level::Low, OutputConfig::default());
 
     delay.delay_millis(10);
     rst.set_high();
@@ -61,15 +61,15 @@ pub async fn init_cam(peripherals: Peripherals) -> Result<Camera<'static>, ()> {
     let i2c_config = i2c::master::Config::default();
     let i2c = i2c::master::I2c::new(peripherals.I2C0, i2c_config)
         .unwrap()
-        .with_scl(peripherals.GPIO14)
-        .with_sda(peripherals.GPIO13);
+        .with_scl(peripherals.GPIO13)
+        .with_sda(peripherals.GPIO12);
 
-    let vsync_pin = peripherals.GPIO36;
-    let href_pin = peripherals.GPIO37;
+    let vsync_pin = peripherals.GPIO4;
+    let href_pin = peripherals.GPIO5;
     let pclk_pin = peripherals.GPIO3;
 
     let config = Config::default()
-        .with_frequency(Rate::from_mhz(10))
+        .with_frequency(Rate::from_mhz(20))
         .with_eof_mode(EofMode::VsyncSignal)
         .with_invert_vsync(false)
         .with_invert_h_enable(false);
@@ -77,14 +77,14 @@ pub async fn init_cam(peripherals: Peripherals) -> Result<Camera<'static>, ()> {
     let lcd_cam = LcdCam::new(peripherals.LCD_CAM);
     let camera = Camera::new(lcd_cam.cam, peripherals.DMA_CH0, config)
         .unwrap()
-        .with_data0(peripherals.GPIO12)
-        .with_data1(peripherals.GPIO39)
-        .with_data2(peripherals.GPIO11)
-        .with_data3(peripherals.GPIO40)
-        .with_data4(peripherals.GPIO10)
-        .with_data5(peripherals.GPIO41)
-        .with_data6(peripherals.GPIO9)
-        .with_data7(peripherals.GPIO42)
+        .with_data0(peripherals.GPIO11)
+        .with_data1(peripherals.GPIO7)
+        .with_data2(peripherals.GPIO10)
+        .with_data3(peripherals.GPIO15)
+        .with_data4(peripherals.GPIO9)
+        .with_data5(peripherals.GPIO16)
+        .with_data6(peripherals.GPIO46)
+        .with_data7(peripherals.GPIO17)
         .with_pixel_clock(pclk_pin)
         .with_vsync(vsync_pin)
         .with_h_enable(href_pin);
@@ -98,7 +98,7 @@ pub async fn init_cam(peripherals: Peripherals) -> Result<Camera<'static>, ()> {
         Ok(_) => defmt::info!("ov2640 set_image_format ok"),
         Err(e) => defmt::warn!("ov2640 set_image_format failed {:?}", e),
     }
-    match ov.set_resolution(ov2640::Resolution::R320x240) {
+    match ov.set_resolution(ov2640::Resolution::R800x600) {
         Ok(_) => defmt::info!("ov2640 set_resolution ok"),
         Err(e) => defmt::warn!("ov2640 set_resolution failed {:?}", e),
     }
@@ -142,12 +142,13 @@ pub async fn stream_camera(
 
     let mut jpeg_buffer: Box<[u8; 40960]> = Box::new([0u8; 40960]);
     let mut jpeg_len = 0;
-    let mut in_frame = false;
     let mut frame_count = 0;
+    let mut in_frame = false;
+    // FPS 计数
+    let mut fps_count = 0;
+    let mut last_fps_instant = Instant::now();
 
     loop {
-        info!("Starting camera receive, frame: {}", frame_count);
-
         let mut transfer = match camera.receive(dma_buf) {
             Ok(t) => t,
             Err((e, cam, buf)) => {
@@ -155,21 +156,23 @@ pub async fn stream_camera(
                 return (cam, buf);
             }
         };
-
         loop {
             let (data, eof) = transfer.peek_until_eof();
             let len = data.len();
             if data.is_empty() {
-                transfer.consume(0);
+                if transfer.is_done() {
+                    warn!("Too slow!");
+                    break;
+                }
                 if eof {
                     break;
                 }
+                Timer::after_micros(1000).await;
                 continue;
             }
-
             if let Err(_) = process_jpeg_data(
                 data,
-                &mut *jpeg_buffer, // 解引用 Box
+                &mut *jpeg_buffer,
                 &mut jpeg_len,
                 &mut in_frame,
                 &mut frame_count,
@@ -177,15 +180,23 @@ pub async fn stream_camera(
             )
             .await
             {
+                warn!("process error");
                 return transfer.stop();
             }
-
             transfer.consume(len);
             if eof {
-                break;
+                //FPS 计数逻辑
+                fps_count += 1;
+                let now = Instant::now();
+                if now - last_fps_instant >= Duration::from_secs(1) {
+                    info!("FPS: {}", fps_count);
+                    fps_count = 0;
+                    last_fps_instant = now;
+                    // defmt::info!("HEAP: {:?}", esp_alloc::HEAP.stats());
+                }
+                //break;
             }
         }
-
         (camera, dma_buf) = transfer.stop();
     }
 }
@@ -199,71 +210,74 @@ async fn process_jpeg_data(
     socket: &mut TcpSocket<'_>,
 ) -> Result<(), ()> {
     let mut i = 0;
-
     while i < data.len() {
-        // 查找 JPEG 起始标记 (SOI: 0xFF 0xD8)
         if !*in_frame {
-            if i + 1 < data.len() && data[i] == 0xFF && data[i + 1] == 0xD8 {
+            // 查找 JPEG SOI (0xFF 0xD8)
+            if let Some(pos) = data[i..].windows(2).position(|w| w == [0xFF, 0xD8]) {
                 *in_frame = true;
                 *jpeg_len = 0;
+                i += pos;
 
-                // 写入 SOI 到缓冲区
-                if *jpeg_len + 2 <= jpeg_buffer.len() {
-                    jpeg_buffer[*jpeg_len..*jpeg_len + 2].copy_from_slice(&[0xFF, 0xD8]);
-                    *jpeg_len += 2;
+                // 批量复制 SOI
+                if jpeg_buffer.len() >= 2 {
+                    jpeg_buffer[..2].copy_from_slice(&[0xFF, 0xD8]);
+                    *jpeg_len = 2;
+                    i += 2;
+                } else {
+                    return Err(()); // 缓冲区太小
                 }
-                i += 2;
-                continue;
+            } else {
+                break; // 当前数据块中没有 SOI
             }
-            i += 1;
             continue;
         }
 
-        // 在帧内,查找结束标记 (EOI: 0xFF 0xD9)
-        if i + 1 < data.len() && data[i] == 0xFF && data[i + 1] == 0xD9 {
-            // 写入 EOI
-            if *jpeg_len + 2 <= jpeg_buffer.len() {
-                jpeg_buffer[*jpeg_len..*jpeg_len + 2].copy_from_slice(&[0xFF, 0xD9]);
-                *jpeg_len += 2;
+        // 在帧内处理
+        // 查找 EOI (0xFF 0xD9)
+        let remaining = &data[i..];
+        if let Some(eoi_pos) = remaining.windows(2).position(|w| w == [0xFF, 0xD9]) {
+            let bytes_to_copy = eoi_pos + 2; // 包含 EOI
 
-                // 发送完整的 multipart 帧
+            // 检查缓冲区空间
+            if *jpeg_len + bytes_to_copy <= jpeg_buffer.len() {
+                // 批量复制数据
+                jpeg_buffer[*jpeg_len..*jpeg_len + bytes_to_copy]
+                    .copy_from_slice(&remaining[..bytes_to_copy]);
+                *jpeg_len += bytes_to_copy;
                 if let Err(e) =
                     send_jpeg_frame(socket, &jpeg_buffer[..*jpeg_len], *frame_count).await
                 {
                     warn!("Failed to send frame: {}", e);
                     return Err(());
                 }
-
-                info!("Frame {} sent, size: {} bytes", *frame_count, *jpeg_len);
                 *frame_count += 1;
-                *in_frame = false;
-                *jpeg_len = 0;
-                i += 2;
-                continue;
             } else {
-                // 缓冲区溢出，丢弃此帧
                 warn!(
-                    "JPEG buffer overflow, dropping frame (size would be: {})",
-                    *jpeg_len + 2
+                    "JPEG buffer overflow, dropping frame (size: {})",
+                    *jpeg_len + bytes_to_copy
                 );
-                *in_frame = false;
-                *jpeg_len = 0;
-                i += 2;
-                continue;
             }
-        }
 
-        // 累积帧数据
-        if *jpeg_len < jpeg_buffer.len() {
-            jpeg_buffer[*jpeg_len] = data[i];
-            *jpeg_len += 1;
-        } else {
-            // 缓冲区满，丢弃此帧
-            warn!("JPEG buffer full at {} bytes, dropping frame", *jpeg_len);
+            // 重置状态
             *in_frame = false;
             *jpeg_len = 0;
+            i += bytes_to_copy;
+        } else {
+            // 没有找到 EOI，复制剩余数据
+            let bytes_to_copy = remaining.len();
+            let available_space = jpeg_buffer.len().saturating_sub(*jpeg_len);
+
+            if bytes_to_copy <= available_space {
+                jpeg_buffer[*jpeg_len..*jpeg_len + bytes_to_copy].copy_from_slice(remaining);
+                *jpeg_len += bytes_to_copy;
+            } else {
+                // 缓冲区不足，丢弃帧
+                warn!("JPEG buffer full at {} bytes, dropping frame", *jpeg_len);
+                *in_frame = false;
+                *jpeg_len = 0;
+            }
+            break; // 处理完当前数据块
         }
-        i += 1;
     }
 
     Ok(())
