@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, vec::Vec};
+use alloc::vec::Vec;
 use defmt::{error, info, warn};
 use embassy_net::tcp::TcpSocket;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -98,7 +98,7 @@ pub async fn init_cam(peripherals: Peripherals) -> Result<Camera<'static>, ()> {
         Ok(_) => defmt::info!("ov2640 set_image_format ok"),
         Err(e) => defmt::warn!("ov2640 set_image_format failed {:?}", e),
     }
-    match ov.set_resolution(ov2640::Resolution::R800x600) {
+    match ov.set_resolution(ov2640::Resolution::R640x480) {
         Ok(_) => defmt::info!("ov2640 set_resolution ok"),
         Err(e) => defmt::warn!("ov2640 set_resolution failed {:?}", e),
     }
@@ -139,8 +139,13 @@ pub async fn stream_camera(
         warn!("Failed to send HTTP headers: {}", e);
         return (camera, dma_buf);
     }
-
-    let mut jpeg_buffer: Box<[u8; 40960]> = Box::new([0u8; 40960]);
+    let mut jpeg_buffer = unsafe {
+        let p = esp_alloc::HEAP.alloc_caps(
+            esp_alloc::MemoryCapability::External.into(),
+            core::alloc::Layout::from_size_align(40960 * 10, 4).unwrap(),
+        );
+        alloc::vec::Vec::from_raw_parts(p, 40960 * 10, 40960 * 10)
+    };
     let mut jpeg_len = 0;
     let mut frame_count = 0;
     let mut in_frame = false;
@@ -167,12 +172,12 @@ pub async fn stream_camera(
                 if eof {
                     break;
                 }
-                Timer::after_micros(1000).await;
+                Timer::after_micros(100).await;
                 continue;
             }
             if let Err(_) = process_jpeg_data(
                 data,
-                &mut *jpeg_buffer,
+                &mut jpeg_buffer,
                 &mut jpeg_len,
                 &mut in_frame,
                 &mut frame_count,
@@ -192,7 +197,7 @@ pub async fn stream_camera(
                     info!("FPS: {}", fps_count);
                     fps_count = 0;
                     last_fps_instant = now;
-                    // defmt::info!("HEAP: {:?}", esp_alloc::HEAP.stats());
+                    defmt::info!("HEAP: {:?}", esp_alloc::HEAP.stats());
                 }
                 //break;
             }
@@ -224,6 +229,7 @@ async fn process_jpeg_data(
                     *jpeg_len = 2;
                     i += 2;
                 } else {
+                    warn!("buf to small, buf size: {}", jpeg_buffer.len());
                     return Err(()); // 缓冲区太小
                 }
             } else {

@@ -7,7 +7,7 @@ use esp_radio::{
     Controller,
 };
 extern crate alloc;
-use alloc::string::String;
+use alloc::{boxed::Box, string::String};
 
 use crate::{cam::stream_camera, errors::RuntimeError, mk_static};
 
@@ -46,8 +46,15 @@ pub async fn write_all(socket: &mut TcpSocket<'_>, buf: &[u8]) -> Result<(), ()>
 
 #[embassy_executor::task]
 pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
-    let mut rx_buffer = [0; 4096];
-    let mut tx_buffer = [0; 4096 * 8];
+    let mut rx_buffer = Box::new([0u8; 4096]);
+    //let mut tx_buffer = Box::new([0u8; 4096 * 14]);
+    let mut tx_buffer = unsafe {
+        let p = esp_alloc::HEAP.alloc_caps(
+            esp_alloc::MemoryCapability::External.into(),
+            core::alloc::Layout::from_size_align(40960 * 10, 4).unwrap(),
+        );
+        alloc::vec::Vec::from_raw_parts(p, 40960 * 10, 40960 * 10)
+    };
     loop {
         if stack.is_link_up() {
             break;
@@ -59,7 +66,7 @@ pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
         .inspect(|c| defmt::info!("ipv4 config: {}", c));
     let mut dma_buf = dma_rx_stream_buffer!(65536);
     loop {
-        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+        let mut socket = TcpSocket::new(stack, &mut *rx_buffer, &mut tx_buffer);
         socket.set_timeout(Some(Duration::from_secs(10)));
         defmt::info!("Wait for connection...");
         let r = socket
@@ -136,7 +143,6 @@ pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
 
         let request = unsafe { core::str::from_utf8_unchecked(&buffer[..pos]) };
         defmt::info!("Request: <{}>", request);
-        defmt::info!("HEAP: {:?}", esp_alloc::HEAP.stats());
         if request.contains("GET /index") {
             let buf = include_bytes!("../../../../stream.html");
             let mut header = heapless::String::<256>::new();

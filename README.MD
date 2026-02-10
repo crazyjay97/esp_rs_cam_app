@@ -16,6 +16,11 @@
 * esp_radio
 
 
+### For S3R16V
+```
+export ESP_HAL_CONFIG_PSRAM_MODE=octal
+```
+
 ### save image stream to local file
 ```
 curl http://IP/stream --output stream.mjpeg --max-time 20

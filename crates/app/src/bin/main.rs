@@ -1,12 +1,12 @@
 #![no_std]
 #![no_main]
-
+#![feature(allocator_api)]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
-use esp_alloc as _;
+use esp_alloc::{self as _};
 use esp_hal::clock::CpuClock;
 use {esp_backtrace as _, esp_println as _};
 extern crate alloc;
@@ -19,11 +19,13 @@ defmt::timestamp!("{=usize}", COUNT.fetch_add(1, Ordering::Relaxed));
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let config = config.with_psram(esp_hal::psram::PsramConfig {
-        size: esp_hal::psram::PsramSize::Size(8 * 1024 * 1024),
-        core_clock: Some(esp_hal::psram::SpiTimingConfigCoreClock::default()),
-        flash_frequency: esp_hal::psram::FlashFreq::FlashFreq80m,
-        ram_frequency: esp_hal::psram::SpiRamFreq::Freq80m,
+    let config = config.with_psram({
+        let mut config = esp_hal::psram::PsramConfig::default();
+        config.size = esp_hal::psram::PsramSize::Size(16 * 1024 * 1024);
+        config.flash_frequency = esp_hal::psram::FlashFreq::FlashFreq120m;
+        config.core_clock =
+            Some(esp_hal::psram::SpiTimingConfigCoreClock::SpiTimingConfigCoreClock80m);
+        config
     });
     let peripherals = esp_hal::init(config);
     // RTOS Timer
@@ -32,15 +34,9 @@ async fn main(spawner: Spawner) {
     esp_alloc::heap_allocator!(size: 128 * 1024); // 128KB 内部 RAM
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
     esp_rtos::start(timg0.timer0);
-
-    let psram_size = esp_hal::psram::psram_raw_parts(&peripherals.PSRAM);
-    defmt::info!("PSRAM size: {}", psram_size);
     // Clone for camera before moving fields
     info!("Embassy initialized!");
-
-    let psram_size = esp_hal::psram::psram_raw_parts(&peripherals.PSRAM);
-    defmt::info!("PSRAM size: {}", psram_size);
-
+    defmt::info!("RAM: {}", esp_alloc::HEAP.stats());
     // Init Wifi
     let rng = esp_hal::rng::Rng::new();
     //Init Camera
