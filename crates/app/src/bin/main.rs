@@ -22,9 +22,9 @@ async fn main(spawner: Spawner) {
     let config = config.with_psram({
         let mut config = esp_hal::psram::PsramConfig::default();
         config.size = esp_hal::psram::PsramSize::Size(16 * 1024 * 1024);
-        config.flash_frequency = esp_hal::psram::FlashFreq::FlashFreq120m;
-        config.core_clock =
-            Some(esp_hal::psram::SpiTimingConfigCoreClock::SpiTimingConfigCoreClock80m);
+        // config.flash_frequency = esp_hal::psram::FlashFreq::FlashFreq120m;
+        // config.core_clock =
+        //     Some(esp_hal::psram::SpiTimingConfigCoreClock::SpiTimingConfigCoreClock80m);
         config
     });
     let peripherals = esp_hal::init(config);

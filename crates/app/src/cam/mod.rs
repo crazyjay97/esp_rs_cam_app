@@ -98,7 +98,7 @@ pub async fn init_cam(peripherals: Peripherals) -> Result<Camera<'static>, ()> {
         Ok(_) => defmt::info!("ov2640 set_image_format ok"),
         Err(e) => defmt::warn!("ov2640 set_image_format failed {:?}", e),
     }
-    match ov.set_resolution(ov2640::Resolution::R640x480) {
+    match ov.set_resolution(ov2640::Resolution::R320x240) {
         Ok(_) => defmt::info!("ov2640 set_resolution ok"),
         Err(e) => defmt::warn!("ov2640 set_resolution failed {:?}", e),
     }
@@ -110,7 +110,7 @@ pub async fn init_cam(peripherals: Peripherals) -> Result<Camera<'static>, ()> {
         Ok(_) => defmt::info!("ov2640 set_brightness ok"),
         Err(e) => defmt::warn!("ov2640 set_brightness failed {:?}", e),
     }
-    match ov.set_contrast(ov2640::Contrast::Contrast2) {
+    match ov.set_contrast(ov2640::Contrast::Contrast1) {
         Ok(_) => defmt::info!("ov2640 set_contrast ok"),
         Err(e) => defmt::warn!("ov2640 set_contrast failed {:?}", e),
     }
@@ -190,16 +190,14 @@ pub async fn stream_camera(
             }
             transfer.consume(len);
             if eof {
-                //FPS 计数逻辑
-                fps_count += 1;
                 let now = Instant::now();
                 if now - last_fps_instant >= Duration::from_secs(1) {
-                    info!("FPS: {}", fps_count);
-                    fps_count = 0;
+                    let frames_sent = frame_count - fps_count;
+                    info!("FPS: {}", frames_sent);
+                    fps_count = frame_count;
                     last_fps_instant = now;
                     defmt::info!("HEAP: {:?}", esp_alloc::HEAP.stats());
                 }
-                //break;
             }
         }
         (camera, dma_buf) = transfer.stop();

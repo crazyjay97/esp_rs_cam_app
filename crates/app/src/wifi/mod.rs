@@ -64,7 +64,7 @@ pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
     stack
         .config_v4()
         .inspect(|c| defmt::info!("ipv4 config: {}", c));
-    let mut dma_buf = dma_rx_stream_buffer!(65536);
+    let mut dma_buf = dma_rx_stream_buffer!(65536, 1024);
     loop {
         let mut socket = TcpSocket::new(stack, &mut *rx_buffer, &mut tx_buffer);
         socket.set_timeout(Some(Duration::from_secs(10)));

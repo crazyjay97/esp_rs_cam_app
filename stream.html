@@ -2,128 +2,576 @@
 <html lang="en">
     <head>
         <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>ESP32 Camera Stream</title>
         <style>
-            body {
+            * {
                 margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    "Helvetica Neue", Arial, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
                 display: flex;
-                flex-direction: column;
                 justify-content: center;
                 align-items: center;
-                height: 100vh;
-                background-color: #1e1e1e;
-                color: #fff;
-                font-family: sans-serif;
+                padding: 20px;
+            }
+
+            .container {
+                background: rgba(255, 255, 255, 0.95);
+                backdrop-filter: blur(10px);
+                border-radius: 24px;
+                padding: 32px;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                max-width: 1200px;
+                width: 100%;
+            }
+
+            .header {
+                text-align: center;
+                margin-bottom: 24px;
+            }
+
+            .header h1 {
+                font-size: 28px;
+                font-weight: 700;
+                color: #1a202c;
+                margin-bottom: 8px;
+            }
+
+            .header p {
+                font-size: 14px;
+                color: #718096;
+            }
+
+            .video-wrapper {
+                position: relative;
+                background: #000;
+                border-radius: 16px;
+                overflow: hidden;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+                margin-bottom: 20px;
             }
 
             #camera {
-                max-width: 90%;
-                max-height: 80%;
-                border: 4px solid #444;
-                border-radius: 8px;
-                background-color: #000;
+                width: 100%;
+                height: auto;
+                display: block;
+                min-height: 400px;
             }
 
-            #fps {
-                margin-top: 10px;
-                font-size: 18px;
-                font-weight: bold;
-                color: #0f0;
+            .status-overlay {
+                position: absolute;
+                top: 16px;
+                right: 16px;
+                background: rgba(0, 0, 0, 0.7);
+                backdrop-filter: blur(10px);
+                padding: 8px 16px;
+                border-radius: 20px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .status-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: #48bb78;
+                animation: pulse 2s ease-in-out infinite;
+            }
+
+            .status-dot.disconnected {
+                background: #f56565;
+                animation: none;
+            }
+
+            @keyframes pulse {
+                0%,
+                100% {
+                    opacity: 1;
+                }
+                50% {
+                    opacity: 0.5;
+                }
+            }
+
+            .status-text {
+                color: #fff;
+                font-size: 13px;
+                font-weight: 500;
+            }
+
+            .stats {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 16px;
+                margin-bottom: 20px;
+            }
+
+            .stat-card {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding: 16px;
+                border-radius: 12px;
+                text-align: center;
+                color: white;
+            }
+
+            .stat-label {
+                font-size: 12px;
+                opacity: 0.9;
+                margin-bottom: 4px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+
+            .stat-value {
+                font-size: 24px;
+                font-weight: 700;
+            }
+
+            .controls {
+                display: flex;
+                gap: 12px;
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+
+            .btn {
+                padding: 12px 32px;
+                border: none;
+                border-radius: 12px;
+                font-size: 15px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .btn-primary {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            }
+
+            .btn-primary:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+            }
+
+            .btn-primary:active {
+                transform: translateY(0);
+            }
+
+            .btn-secondary {
+                background: #e2e8f0;
+                color: #2d3748;
+            }
+
+            .btn-secondary:hover {
+                background: #cbd5e0;
+                transform: translateY(-2px);
+            }
+
+            .btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+                transform: none !important;
+            }
+
+            .loading {
+                display: none;
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                color: white;
+                font-size: 16px;
+                font-weight: 500;
+            }
+
+            .loading.active {
+                display: block;
+            }
+
+            .spinner {
+                display: inline-block;
+                width: 20px;
+                height: 20px;
+                border: 3px solid rgba(255, 255, 255, 0.3);
+                border-radius: 50%;
+                border-top-color: white;
+                animation: spin 1s linear infinite;
+            }
+
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
+            @media (max-width: 768px) {
+                .container {
+                    padding: 20px;
+                }
+
+                .header h1 {
+                    font-size: 24px;
+                }
+
+                .stats {
+                    grid-template-columns: repeat(2, 1fr);
+                }
+
+                .btn {
+                    padding: 10px 24px;
+                    font-size: 14px;
+                }
             }
         </style>
     </head>
     <body>
-        <canvas id="camera"></canvas>
-        <div id="fps">FPS: 0</div>
-        <button id="play-btn">Play</button>
+        <div class="container">
+            <div class="header">
+                <h1>📷 ESP32 Camera Stream</h1>
+                <p>Real-time video streaming from ESP32-S3</p>
+            </div>
+
+            <div class="video-wrapper">
+                <canvas id="camera"></canvas>
+                <div class="status-overlay">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span class="status-text" id="statusText"
+                        >Disconnected</span
+                    >
+                </div>
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-label">Frame Rate</div>
+                    <div class="stat-value" id="fps">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Resolution</div>
+                    <div class="stat-value" id="resolution">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Frames Received</div>
+                    <div class="stat-value" id="frameCount">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Latency</div>
+                    <div class="stat-value" id="latency">-</div>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button class="btn btn-primary" id="playBtn">
+                    <span>▶</span> Start Stream
+                </button>
+                <button class="btn btn-secondary" id="stopBtn" disabled>
+                    <span>⏸</span> Stop Stream
+                </button>
+            </div>
+        </div>
+
         <script>
-            async function streamMJPEG() {
-                const canvas = document.getElementById("camera");
-                const ctx = canvas.getContext("2d");
-                const fpsDisplay = document.getElementById("fps");
+            let isStreaming = false;
+            let streamReader = null;
+            let streamAbortController = null;
 
-                const response = await fetch("/stream");
-                const reader = response.body.getReader();
-                let buffer = new Uint8Array();
-                const decoder = new TextDecoder();
+            const canvas = document.getElementById("camera");
+            const ctx = canvas.getContext("2d", { alpha: false });
+            const fpsDisplay = document.getElementById("fps");
+            const resolutionDisplay = document.getElementById("resolution");
+            const frameCountDisplay = document.getElementById("frameCount");
+            const latencyDisplay = document.getElementById("latency");
+            const statusDot = document.getElementById("statusDot");
+            const statusText = document.getElementById("statusText");
+            const loading = document.getElementById("loading");
+            const playBtn = document.getElementById("playBtn");
+            const stopBtn = document.getElementById("stopBtn");
 
-                function concatBuffer(oldBuf, newBuf) {
-                    let tmp = new Uint8Array(oldBuf.length + newBuf.length);
-                    tmp.set(oldBuf, 0);
-                    tmp.set(newBuf, oldBuf.length);
-                    return tmp;
+            let frameCount = 0;
+            let totalFrames = 0;
+            let lastTime = performance.now();
+            let isDecoding = false;
+            let latencies = [];
+
+            function updateStatus(connected) {
+                if (connected) {
+                    statusDot.classList.remove("disconnected");
+                    statusText.textContent = "Connected";
+                } else {
+                    statusDot.classList.add("disconnected");
+                    statusText.textContent = "Disconnected";
+                }
+            }
+
+            function findSequence(buffer, sequence, startIndex = 0) {
+                for (
+                    let i = startIndex;
+                    i <= buffer.length - sequence.length;
+                    i++
+                ) {
+                    let match = true;
+                    for (let j = 0; j < sequence.length; j++) {
+                        if (buffer[i + j] !== sequence[j]) {
+                            match = false;
+                            break;
+                        }
+                    }
+                    if (match) return i;
+                }
+                return -1;
+            }
+
+            // 验证 JPEG 帧的完整性
+            function isValidJpeg(data) {
+                if (data.length < 4) return false;
+
+                // 检查 JPEG SOI (Start of Image): 0xFF 0xD8
+                if (data[0] !== 0xff || data[1] !== 0xd8) {
+                    console.warn("Invalid JPEG: missing SOI");
+                    return false;
                 }
 
-                let frameCount = 0;
-                let lastTime = performance.now();
+                // 检查 JPEG EOI (End of Image): 0xFF 0xD9
+                const lastTwo = data.length - 2;
+                if (data[lastTwo] !== 0xff || data[lastTwo + 1] !== 0xd9) {
+                    console.warn("Invalid JPEG: missing EOI");
+                    return false;
+                }
 
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) break;
-                    buffer = concatBuffer(buffer, value);
+                return true;
+            }
 
-                    while (true) {
-                        let boundaryIndex = decoder
-                            .decode(buffer)
-                            .indexOf("--frame");
-                        if (boundaryIndex < 0) break;
+            async function streamMJPEG() {
+                const boundaryBytes = new TextEncoder().encode("--frame\r\n");
+                const headerEndBytes = new Uint8Array([13, 10, 13, 10]); // \r\n\r\n
 
-                        let lenHeaderEnd = decoder
-                            .decode(buffer.slice(boundaryIndex))
-                            .indexOf("\r\n\r\n");
-                        if (lenHeaderEnd < 0) break;
+                try {
+                    streamAbortController = new AbortController();
+                    const response = await fetch("/stream", {
+                        signal: streamAbortController.signal,
+                    });
 
-                        let headerStr = decoder.decode(
-                            buffer.slice(
-                                boundaryIndex,
-                                boundaryIndex + lenHeaderEnd,
-                            ),
+                    streamReader = response.body.getReader();
+                    let buffer = new Uint8Array();
+
+                    updateStatus(true);
+                    loading.classList.remove("active");
+
+                    let droppedFrames = 0;
+                    let lastLogTime = performance.now();
+
+                    while (isStreaming) {
+                        const { value, done } = await streamReader.read();
+                        if (done) break;
+
+                        // 高效拼接 buffer
+                        const tmp = new Uint8Array(
+                            buffer.length + value.length,
                         );
-                        let match = headerStr.match(/Content-Length: (\d+)/i);
-                        if (!match) {
-                            buffer = buffer.slice(boundaryIndex + lenHeaderEnd);
-                            continue;
+                        tmp.set(buffer);
+                        tmp.set(value, buffer.length);
+                        buffer = tmp;
+
+                        // 处理所有完整帧
+                        while (true) {
+                            const boundaryIndex = findSequence(
+                                buffer,
+                                boundaryBytes,
+                            );
+                            if (boundaryIndex < 0) break;
+
+                            const headerEnd = findSequence(
+                                buffer,
+                                headerEndBytes,
+                                boundaryIndex,
+                            );
+                            if (headerEnd < 0) break;
+
+                            // 解析 Content-Length
+                            const headerBytes = buffer.slice(
+                                boundaryIndex,
+                                headerEnd,
+                            );
+                            const headerText = new TextDecoder().decode(
+                                headerBytes,
+                            );
+                            const match = headerText.match(
+                                /Content-Length:\s*(\d+)/i,
+                            );
+
+                            if (!match) {
+                                // 无效的 header，跳过这个边界
+                                buffer = buffer.slice(
+                                    boundaryIndex + boundaryBytes.length,
+                                );
+                                continue;
+                            }
+
+                            const contentLength = parseInt(match[1], 10);
+                            const frameStart = headerEnd + 4; // 跳过 \r\n\r\n
+                            const frameEnd = frameStart + contentLength;
+
+                            // 等待完整帧数据到达
+                            if (buffer.length < frameEnd) break;
+
+                            // 提取 JPEG 数据
+                            const jpegData = buffer.slice(frameStart, frameEnd);
+
+                            // ✅ 关键修复：验证 JPEG 完整性
+                            if (!isValidJpeg(jpegData)) {
+                                console.error(
+                                    "Corrupted JPEG frame detected, dropping",
+                                );
+                                droppedFrames++;
+                                buffer = buffer.slice(frameEnd);
+                                continue;
+                            }
+
+                            const frameReceiveTime = performance.now();
+
+                            // 跳帧策略：只在空闲时解码（防止渲染队列积压）
+                            if (!isDecoding) {
+                                isDecoding = true;
+
+                                // 使用 createImageBitmap 提高性能
+                                const blob = new Blob([jpegData], {
+                                    type: "image/jpeg",
+                                });
+
+                                createImageBitmap(blob)
+                                    .then((bitmap) => {
+                                        canvas.width = bitmap.width;
+                                        canvas.height = bitmap.height;
+                                        ctx.drawImage(bitmap, 0, 0);
+                                        bitmap.close();
+
+                                        // 更新分辨率
+                                        resolutionDisplay.textContent = `${bitmap.width}×${bitmap.height}`;
+
+                                        // 计算延迟
+                                        const decodeTime =
+                                            performance.now() -
+                                            frameReceiveTime;
+                                        latencies.push(decodeTime);
+                                        if (latencies.length > 10)
+                                            latencies.shift();
+                                        const avgLatency =
+                                            latencies.reduce(
+                                                (a, b) => a + b,
+                                                0,
+                                            ) / latencies.length;
+                                        latencyDisplay.textContent = `${avgLatency.toFixed(0)}ms`;
+
+                                        // 更新帧数
+                                        frameCount++;
+                                        totalFrames++;
+                                        frameCountDisplay.textContent =
+                                            totalFrames;
+
+                                        // 计算 FPS
+                                        const now = performance.now();
+                                        if (now - lastTime >= 1000) {
+                                            fpsDisplay.textContent = frameCount;
+                                            frameCount = 0;
+                                            lastTime = now;
+                                        }
+
+                                        isDecoding = false;
+                                    })
+                                    .catch((e) => {
+                                        console.error(
+                                            "Failed to decode frame:",
+                                            e,
+                                        );
+                                        droppedFrames++;
+                                        isDecoding = false;
+                                    });
+                            } else {
+                                // 正在解码，跳过此帧
+                                droppedFrames++;
+                            }
+
+                            // 移除已处理的数据
+                            buffer = buffer.slice(frameEnd);
                         }
 
-                        let contentLength = parseInt(match[1], 10);
-                        let frameStart = boundaryIndex + lenHeaderEnd + 4;
-                        if (buffer.length < frameStart + contentLength) break;
-
-                        let frameData = buffer.slice(
-                            frameStart,
-                            frameStart + contentLength,
-                        );
-                        const blob = new Blob([frameData], {
-                            type: "image/jpeg",
-                        });
-                        const img = new Image();
-                        img.onload = () => {
-                            canvas.width = img.width;
-                            canvas.height = img.height;
-                            ctx.drawImage(img, 0, 0);
-                            URL.revokeObjectURL(img.src);
-
-                            // FPS 计算
-                            frameCount++;
-                            const now = performance.now();
-                            if (now - lastTime >= 1000) {
-                                fpsDisplay.textContent = `FPS: ${frameCount}`;
-                                frameCount = 0;
-                                lastTime = now;
+                        // 每 5 秒打印一次丢帧统计
+                        const now = performance.now();
+                        if (now - lastLogTime >= 5000) {
+                            if (droppedFrames > 0) {
+                                console.log(
+                                    `Dropped ${droppedFrames} frames in last 5s`,
+                                );
                             }
-                        };
-                        img.src = URL.createObjectURL(blob);
+                            droppedFrames = 0;
+                            lastLogTime = now;
+                        }
 
-                        buffer = buffer.slice(frameStart + contentLength);
+                        // 防止 buffer 过大（如果超过 2MB 说明有问题，清空重新开始）
+                        if (buffer.length > 2 * 1024 * 1024) {
+                            console.warn(
+                                "Buffer overflow, clearing and resyncing",
+                            );
+                            buffer = new Uint8Array();
+                        }
+                    }
+                } catch (error) {
+                    if (error.name !== "AbortError") {
+                        console.error("Stream error:", error);
+                    }
+                } finally {
+                    updateStatus(false);
+                    if (streamReader) {
+                        try {
+                            await streamReader.cancel();
+                        } catch (e) {}
+                        streamReader = null;
                     }
                 }
             }
 
-            document
-                .getElementById("play-btn")
-                .addEventListener("click", () => {
-                    streamMJPEG();
-                });
+            playBtn.addEventListener("click", () => {
+                if (isStreaming) return;
+
+                isStreaming = true;
+                playBtn.disabled = true;
+                stopBtn.disabled = false;
+                loading.classList.add("active");
+
+                frameCount = 0;
+                totalFrames = 0;
+                lastTime = performance.now();
+
+                streamMJPEG();
+            });
+
+            stopBtn.addEventListener("click", () => {
+                isStreaming = false;
+                playBtn.disabled = false;
+                stopBtn.disabled = true;
+
+                if (streamAbortController) {
+                    streamAbortController.abort();
+                    streamAbortController = null;
+                }
+            });
         </script>
     </body>
 </html>
