@@ -1,10 +1,8 @@
 # ESP LCD_CAM DEMO
 
 
-<div align="center">
-    ![][commit](https://github.com/crazyjay97/esp_rs_cam_app)
-    ![][stars](https://github.com/crazyjay97/esp_rs_cam_app)
-</div>
+![][commit](https://github.com/crazyjay97/esp_rs_cam_app)
+![][stars](https://github.com/crazyjay97/esp_rs_cam_app)
 
 
 ### board:
@@ -27,5 +25,5 @@ export ESP_HAL_CONFIG_PSRAM_MODE=octal
 curl http://IP/stream --output stream.mjpeg --max-time 20
 ```
 
-### contrib
+### contributors
 ![](https://contrib.rocks/image?repo=crazyjay97/esp_rs_cam_app)
