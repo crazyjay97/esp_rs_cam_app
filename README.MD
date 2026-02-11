@@ -31,6 +31,6 @@ curl http://IP/stream --output stream.mjpeg --max-time 20
 ### contributors
 ![](https://contrib.rocks/image?repo=crazyjay97/esp_rs_cam_app)
 
-[version]: https://badgen.net/github/tag/crazyjay97/esp_rs_cam_app?label=Version&color=1AD1A5
+[version]: https://badgen.net/github/tag/crazyjay97/esp_rs_cam_app?label=Version&color=1AD1A5&cache=0
 [commit]: https://badgen.net/github/last-commit/crazyjay97/esp_rs_cam_app?label=Last%20commit&color=1AD1A5
 [stars]: https://badgen.net/github/stars/crazyjay97/esp_rs_cam_app?label=GitHub%20stars&color=1AD1A5
