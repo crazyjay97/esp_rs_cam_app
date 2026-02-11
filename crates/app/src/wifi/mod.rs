@@ -32,7 +32,6 @@ pub async fn init(
 }
 
 pub async fn write_all(socket: &mut TcpSocket<'_>, buf: &[u8]) -> Result<(), ()> {
-    // info!("{:02X}", buf);
     let mut offset = 0;
     while offset < buf.len() {
         match socket.write(&buf[offset..]).await {
@@ -47,7 +46,6 @@ pub async fn write_all(socket: &mut TcpSocket<'_>, buf: &[u8]) -> Result<(), ()>
 #[embassy_executor::task]
 pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
     let mut rx_buffer = Box::new([0u8; 4096]);
-    //let mut tx_buffer = Box::new([0u8; 4096 * 14]);
     let mut tx_buffer = unsafe {
         let p = esp_alloc::HEAP.alloc_caps(
             esp_alloc::MemoryCapability::External.into(),
@@ -89,7 +87,6 @@ pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
         while attempts < max_attempts {
             match socket.read(&mut buffer[pos..]).await {
                 Ok(0) => {
-                    // 连接正常关闭
                     if pos > 0 {
                         defmt::info!("Client finished sending ({} bytes)", pos);
                         break;
@@ -101,10 +98,7 @@ pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
                 Ok(len) => {
                     pos += len;
                     defmt::debug!("Read {} bytes, total {}", len, pos);
-
                     let request = unsafe { core::str::from_utf8_unchecked(&buffer[..pos]) };
-
-                    // 检查是否收到完整请求
                     if request.contains("\r\n\r\n") {
                         defmt::info!("Complete request received");
                         break;
@@ -115,15 +109,13 @@ pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
                         break;
                     }
 
-                    attempts = 0; // 收到数据，重置尝试计数
+                    attempts = 0;
                 }
                 Err(e) => {
                     defmt::warn!("Read error: {:?}, bytes read: {}", e, pos);
-                    // 如果已经读到了一些数据，尝试处理
                     if pos > 0 {
                         break;
                     } else {
-                        // 没读到数据，直接关闭
                         socket.close();
                         Timer::after(Duration::from_millis(10)).await;
                         continue;
@@ -133,7 +125,6 @@ pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
             attempts += 1;
         }
 
-        // 如果没有读到任何数据，跳过处理
         if pos == 0 {
             defmt::warn!("No data received, closing");
             socket.close();
@@ -165,7 +156,6 @@ pub async fn http_handle(stack: Stack<'static>, mut camera: Camera<'static>) {
                 .write(b"HTTP/1.1 404 Not Found\r\n\r\nNo Image")
                 .await;
         } else {
-            // Default to simple page
             let html = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body><h1>ESP32 Camera</h1><img src='/stream' /></body></html>";
             _ = socket.write(html.as_bytes()).await;
         }
