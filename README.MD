@@ -1,8 +1,9 @@
 # ESP LCD_CAM DEMO
 
+
 <div align="center">
-![][commit]](https://github.com/crazyjay97/esp_rs_cam_app)
-![][stars]](https://github.com/crazyjay97/esp_rs_cam_app)
+    ![][commit](https://github.com/crazyjay97/esp_rs_cam_app)
+    ![][stars](https://github.com/crazyjay97/esp_rs_cam_app)
 </div>
 
 
@@ -25,3 +26,5 @@ export ESP_HAL_CONFIG_PSRAM_MODE=octal
 ```
 curl http://IP/stream --output stream.mjpeg --max-time 20
 ```
+
+![](https://contrib.rocks/image?repo=bitcookies/winrar-keygen)
