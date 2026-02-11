@@ -1,8 +1,8 @@
 # ESP LCD_CAM DEMO
 
 <div align="center">
-[![][commit]](https://github.com/crazyjay97/esp_rs_cam_app)
-[![][stars]](https://github.com/crazyjay97/esp_rs_cam_app)
+![][commit]](https://github.com/crazyjay97/esp_rs_cam_app)
+![][stars]](https://github.com/crazyjay97/esp_rs_cam_app)
 </div>
 
 
