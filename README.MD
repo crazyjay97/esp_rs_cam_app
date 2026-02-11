@@ -1,10 +1,11 @@
 # ESP LCD_CAM DEMO
 
+<div align="center">
 
-![][commit](https://github.com/crazyjay97/esp_rs_cam_app)
+[![][commit]](https://github.com/crazyjay97/esp_rs_cam_app)
 [![][stars]](https://github.com/crazyjay97/esp_rs_cam_app)
-[![][commit]](https://github.com/saadeghi/daisyui)
 
+</div>
 
 ### board:
   * OV2640
@@ -28,3 +29,7 @@ curl http://IP/stream --output stream.mjpeg --max-time 20
 
 ### contributors
 ![](https://contrib.rocks/image?repo=crazyjay97/esp_rs_cam_app)
+
+
+[commit]: https://badgen.net/github/last-commit/crazyjay97/esp_rs_cam_app?label=Last%20commit&color=1AD1A5
+[stars]: https://badgen.net/github/stars/crazyjay97/esp_rs_cam_app?label=GitHub%20stars&color=1AD1A5
