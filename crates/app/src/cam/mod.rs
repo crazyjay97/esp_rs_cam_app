@@ -19,15 +19,12 @@ use esp_hal::{
 
 use crate::wifi::write_all;
 
-// Define event types for the camera stream
 pub enum CamEvent {
     FrameStart,
     Data(Vec<u8>),
     FrameEnd,
 }
 
-// Channel for streaming data from cam_task to http_handle
-// Capacity 10 allows some buffering if HTTP task is slightly slower
 pub static CAM_CHANNEL: Channel<CriticalSectionRawMutex, CamEvent, 5> = Channel::new();
 
 /// GND
@@ -126,7 +123,6 @@ pub async fn stream_camera(
     mut dma_buf: DmaRxStreamBuf,
     socket: &mut TcpSocket<'_>,
 ) -> (Camera<'static>, DmaRxStreamBuf) {
-    // 发送 HTTP 头
     if let Err(e) = write_all(
         socket,
         b"HTTP/1.1 200 OK\r\n\
@@ -149,7 +145,6 @@ pub async fn stream_camera(
     let mut jpeg_len = 0;
     let mut frame_count = 0;
     let mut in_frame = false;
-    // FPS 计数
     let mut fps_count = 0;
     let mut last_fps_instant = Instant::now();
 
@@ -215,36 +210,29 @@ async fn process_jpeg_data(
     let mut i = 0;
     while i < data.len() {
         if !*in_frame {
-            // 查找 JPEG SOI (0xFF 0xD8)
             if let Some(pos) = data[i..].windows(2).position(|w| w == [0xFF, 0xD8]) {
                 *in_frame = true;
                 *jpeg_len = 0;
                 i += pos;
 
-                // 批量复制 SOI
                 if jpeg_buffer.len() >= 2 {
                     jpeg_buffer[..2].copy_from_slice(&[0xFF, 0xD8]);
                     *jpeg_len = 2;
                     i += 2;
                 } else {
                     warn!("buf to small, buf size: {}", jpeg_buffer.len());
-                    return Err(()); // 缓冲区太小
+                    return Err(());
                 }
             } else {
-                break; // 当前数据块中没有 SOI
+                break;
             }
             continue;
         }
 
-        // 在帧内处理
-        // 查找 EOI (0xFF 0xD9)
         let remaining = &data[i..];
         if let Some(eoi_pos) = remaining.windows(2).position(|w| w == [0xFF, 0xD9]) {
-            let bytes_to_copy = eoi_pos + 2; // 包含 EOI
-
-            // 检查缓冲区空间
+            let bytes_to_copy = eoi_pos + 2;
             if *jpeg_len + bytes_to_copy <= jpeg_buffer.len() {
-                // 批量复制数据
                 jpeg_buffer[*jpeg_len..*jpeg_len + bytes_to_copy]
                     .copy_from_slice(&remaining[..bytes_to_copy]);
                 *jpeg_len += bytes_to_copy;
@@ -261,13 +249,10 @@ async fn process_jpeg_data(
                     *jpeg_len + bytes_to_copy
                 );
             }
-
-            // 重置状态
             *in_frame = false;
             *jpeg_len = 0;
             i += bytes_to_copy;
         } else {
-            // 没有找到 EOI，复制剩余数据
             let bytes_to_copy = remaining.len();
             let available_space = jpeg_buffer.len().saturating_sub(*jpeg_len);
 
@@ -275,12 +260,11 @@ async fn process_jpeg_data(
                 jpeg_buffer[*jpeg_len..*jpeg_len + bytes_to_copy].copy_from_slice(remaining);
                 *jpeg_len += bytes_to_copy;
             } else {
-                // 缓冲区不足，丢弃帧
                 warn!("JPEG buffer full at {} bytes, dropping frame", *jpeg_len);
                 *in_frame = false;
                 *jpeg_len = 0;
             }
-            break; // 处理完当前数据块
+            break;
         }
     }
 
@@ -292,8 +276,6 @@ async fn send_jpeg_frame(
     jpeg_data: &[u8],
     _frame_count: u32,
 ) -> Result<(), ()> {
-    // 构造 multipart 边界和头部
-    // 使用 heapless::String 避免堆分配
     let mut header = heapless::String::<256>::new();
     use core::fmt::Write;
 
@@ -303,19 +285,16 @@ async fn send_jpeg_frame(
         jpeg_data.len()
     );
 
-    // 发送头部
     if let Err(e) = write_all(socket, header.as_bytes()).await {
         warn!("Failed to send frame header: {}", e);
         return Err(());
     }
 
-    // 发送 JPEG 数据
     if let Err(e) = write_all(socket, jpeg_data).await {
         warn!("Failed to send JPEG data: {}", e);
         return Err(());
     }
 
-    // 发送帧结尾
     if let Err(e) = write_all(socket, b"\r\n").await {
         warn!("Failed to send frame end: {}", e);
         return Err(());
